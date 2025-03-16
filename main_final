@@ -1,0 +1,165 @@
+import threading
+import sounddevice as sd
+import voice_transcriber
+import whisper
+import webrtcvad
+import re
+import os
+import ollama
+
+
+def chat(message, model, messages):
+        user_message = [{   
+        'role': 'user',
+        'content': message,
+         }]
+        messages.append(user_message[0])
+        response = ollama.chat(model=model, options={"temperature":0.9}, messages=messages)
+        #pre_answer = copy.deepcopy(response)
+        answer = response['message']['content']
+
+        #time = datetime.now()
+        #timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        #response['message']['content'] += response['message']['content'] + " (Time generated: " + timestamp + ")"
+        messages.append(response['message'])
+        return answer
+
+# Function to list available microphones
+def list_microphones():
+    devices = sd.query_devices()
+    mic_devices = []
+    for i, device in enumerate(devices):
+        if device['max_input_channels'] > 0:  # Check if the device can be used for input (microphone)
+            mic_devices.append((i, device['name']))
+    return mic_devices
+
+# Function to select a microphone by ID
+def select_microphone_by_id(mic_id):
+    devices = sd.query_devices()
+    try:
+        # Get the device info for the specified microphone ID
+        device_info = devices[mic_id]
+        if device_info['max_input_channels'] > 0:
+            print(f"Selected Microphone: {device_info['name']}")
+            return mic_id  # Return the device ID to be used for capturing audio
+        else:
+            print("Selected device is not an input device.")
+            return None
+    except IndexError:
+        print(f"Error: Microphone ID {mic_id} does not exist.")
+        return None
+
+# Function to handle microphone input and transcription
+def handle_microphone_input(mic_id):
+    model = whisper.load_model("base")
+
+    while True:
+        sample_rate = 24000
+        agressiveness = 0
+        vad = webrtcvad.Vad(int(agressiveness))
+        segments = voice_transcriber.vad_collector(sample_rate, 30, 1500, vad)
+
+        # Select the microphone by ID
+        mic_id = select_microphone_by_id(mic_id)
+        if mic_id is None:
+            continue  # Skip if the microphone is not valid
+        
+        for i, segment in enumerate(segments):
+            path = 'chunk-%002d.wav' % (i,)
+            print(' Writing %s' % (path,))
+            voice_transcriber.write_wave(path, segment, sample_rate)
+            result = voice_transcriber.transcribe_speech(path, model)
+
+            print("Transcription:")
+            print(result['text'])
+
+            os.remove(path)
+
+def locateMic(name, mic_devices):
+    for mic_id, mic_name in mic_devices:
+        match = re.search(name, mic_name)
+        if match:
+            return mic_id
+
+
+
+# Main function to start the threads for both microphones
+def main():
+    model = whisper.load_model('base')
+    messages = []
+
+    message = """
+    
+You are an assistant to a suicide prevention hotline operator. You will see the conversation between an operator and a caller. You cannot message the caller, your responses are to help guide the operator
+
+"""
+    system_message = [{   
+        'role': 'system',
+        'content': message,
+         }]
+    messages.append(system_message[0])
+
+    runchat = True
+
+    
+    while runchat:
+        sample_rate = 24000
+        agressiveness = 0
+        vad = webrtcvad.Vad(int(agressiveness))
+        segments = voice_transcriber.vad_collector(sample_rate, 30, 1500, vad)
+        for i, segment in enumerate(segments):
+            path = 'chunk-%002d.wav' % (i,)
+            print(' Writing %s' % (path,))
+            voice_transcriber.write_wave(path, segment, sample_rate)
+            result = voice_transcriber.transcribe_speech(path, model)
+
+
+            print("Transcription:")
+            
+            user_message = 'Role: Operator' + result['text']
+            print(user_message)
+    
+            
+            print("Prompt Sent")
+
+            response = chat(user_message, "Llama3.1", messages)
+        
+            print("Ollama response:\n")
+            print(response)
+
+
+            os.remove(path)
+
+
+            sample_rate = 24000
+       
+       
+        agressiveness = 0
+        vad = webrtcvad.Vad(int(agressiveness))
+        segments = voice_transcriber.vad_collector(sample_rate, 30, 1500, vad)
+        for i, segment in enumerate(segments):
+            path = 'chunk-%002d.wav' % (i,)
+            print(' Writing %s' % (path,))
+            voice_transcriber.write_wave(path, segment, sample_rate)
+            result = voice_transcriber.transcribe_speech(path, model)
+
+
+            print("Transcription:")
+            
+            user_message = 'Role: Caller' + result['text']
+            print(user_message)
+
+            
+            print("Prompt Sent")
+
+            response = chat(user_message, "Llama3.1", messages)
+        
+            print("Ollama response:\n")
+            print(response)
+
+
+            os.remove(path)
+
+
+if __name__ == "__main__":
+    main()
